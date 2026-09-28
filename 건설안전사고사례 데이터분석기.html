@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>건설안전 사고 데이터 인사이트</title>
+    <!-- 외부 라이브러리: PapaParse (CSV 파싱), Plotly (차트 시각화) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <style>
+        :root {
+            --primary-navy: #1E3A8A;
+            --primary-light: #3B82F6;
+            --danger-red: #DC2626;
+            --bg-gray: #F3F4F6;
+            --surface-white: #FFFFFF;
+            --text-main: #111827;
+            --text-muted: #6B7280;
+            --border-gray: #E5E7EB;
+            --radius: 8px;
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Pretendard', -apple-system, system-ui, sans-serif; }
+        body { background-color: var(--bg-gray); color: var(--text-main); line-height: 1.5; }
+        
+        /* Header */
+        header { background-color: var(--primary-navy); color: white; padding: 1.5rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .header-titles h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.25rem; }
+        .header-titles p { font-size: 0.875rem; color: #93C5FD; }
+        .header-controls { display: flex; gap: 1rem; align-items: center; }
+        
+        button { background-color: white; color: var(--primary-navy); border: none; padding: 0.5rem 1rem; border-radius: var(--radius); font-weight: 600; cursor: pointer; transition: 0.2s; font-size: 0.875rem; }
+        button:hover { background-color: #F3F4F6; }
+        button.btn-danger { background-color: var(--danger-red); color: white; }
+
+        /* Drag & Drop Upload Overlay */
+        #upload-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; justify-content: center; align-items: center; z-index: 1000; flex-direction: column; }
+        .upload-card { background: white; padding: 4rem 3rem; border-radius: var(--radius); text-align: center; max-width: 600px; width: 90%; border: 3px dashed var(--primary-light); transition: 0.2s; }
+        .upload-card.dragover { background: #EFF6FF; border-color: var(--primary-navy); }
+        .upload-card h2 { margin-bottom: 1rem; color: var(--primary-navy); }
+        .upload-card p { color: var(--text-muted); margin-bottom: 2rem; font-size: 0.95rem; }
+        input[type="file"] { display: none; }
+        .file-label { background: var(--primary-light); color: white; padding: 1rem 2rem; border-radius: var(--radius); cursor: pointer; font-weight: bold; font-size: 1.1rem; display: inline-block; }
+        .file-label:hover { background: var(--primary-navy); }
+        
+        /* Layout */
+        .container { max-width: 1600px; margin: 0 auto; padding: 2rem; display: none; }
+        .status-bar { display: flex; justify-content: space-between; background: white; padding: 1rem 1.5rem; border-radius: var(--radius); margin-bottom: 1.5rem; box-shadow: var(--shadow); font-size: 0.9rem; }
+        .status-item span { font-weight: 700; color: var(--primary-navy); }
+        
+        /* Filters */
+        .filter-section { background: white; padding: 1.5rem; border-radius: var(--radius); margin-bottom: 1.5rem; box-shadow: var(--shadow); }
+        .filter-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+        .filter-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem; }
+        .filter-group { display: flex; flex-direction: column; gap: 0.25rem; }
+        .filter-group label { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); }
+        .filter-group select { padding: 0.5rem; border: 1px solid var(--border-gray); border-radius: 4px; font-size: 0.85rem; }
+        .active-filters { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+        .filter-chip { background: var(--primary-light); color: white; padding: 0.25rem 0.75rem; border-radius: 999px; font-size: 0.75rem; display: flex; align-items: center; gap: 0.5rem; }
+        .filter-chip span { cursor: pointer; font-weight: bold; }
+
+        /* KPIs */
+        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+        .kpi-card { background: white; padding: 1.5rem; border-radius: var(--radius); box-shadow: var(--shadow); text-align: center; border-bottom: 4px solid var(--primary-light); }
+        .kpi-card.danger { border-bottom-color: var(--danger-red); }
+        .kpi-title { font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.5rem; font-weight: 600; }
+        .kpi-value { font-size: 2rem; font-weight: 700; color: var(--primary-navy); }
+        .kpi-card.danger .kpi-value { color: var(--danger-red); }
+
+        /* Charts */
+        .chart-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.5rem; margin-bottom: 2rem; }
+        .chart-grid.full { grid-template-columns: 1fr; }
+        .chart-card { background: white; padding: 1.5rem; border-radius: var(--radius); box-shadow: var(--shadow); }
+        .chart-card h3 { font-size: 1.1rem; margin-bottom: 1rem; color: var(--text-main); border-bottom: 1px solid var(--border-gray); padding-bottom: 0.5rem; font-weight: 600; }
+        .chart-container { width: 100%; height: 350px; }
+
+        /* Data Table */
+        .table-section { background: white; padding: 1.5rem; border-radius: var(--radius); box-shadow: var(--shadow); }
+        .table-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+        .search-box { padding: 0.5rem; border: 1px solid var(--border-gray); border-radius: 4px; width: 300px; }
+        .table-wrapper { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left; }
+        th, td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-gray); }
+        th { background: var(--bg-gray); font-weight: 600; white-space: nowrap; }
+        tr:hover { background: #F9FAFB; cursor: pointer; }
+        .pagination { display: flex; justify-content: center; gap: 0.5rem; margin-top: 1rem; align-items: center;}
+
+        /* Modal */
+        #detail-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 2000; justify-content: center; align-items: center; }
+        .modal-content { background: white; width: 90%; max-width: 1000px; max-height: 90vh; border-radius: var(--radius); overflow-y: auto; padding: 2rem; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
+        .modal-header { display: flex; justify-content: space-between; border-bottom: 2px solid var(--primary-navy); padding-bottom: 1rem; margin-bottom: 1.5rem; }
+        .modal-body { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+        .detail-group h4 { color: var(--primary-navy); margin-bottom: 0.75rem; border-left: 4px solid var(--primary-light); padding-left: 0.5rem; }
+        .detail-row { display: flex; justify-content: space-between; font-size: 0.9rem; margin-bottom: 0.5rem; border-bottom: 1px dashed var(--border-gray); padding-bottom: 0.25rem; }
+        .detail-row .label { color: var(--text-muted); font-weight: 600; width: 40%; }
+        .detail-row .value { width: 60%; text-align: right; word-break: break-all; }
+        .full-width { grid-column: span 2; }
+        .full-width .detail-row { flex-direction: column; }
+        .full-width .detail-row .label { width: 100%; margin-bottom: 0.25rem; }
+        .full-width .detail-row .value { width: 100%; text-align: left; background: var(--bg-gray); padding: 0.75rem; border-radius: 4px; }
+
+        @media (max-width: 1024px) {
+            .chart-grid { grid-template-columns: 1fr; }
+            .modal-body { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Drag & Drop Upload Overlay -->
+    <div id="upload-overlay">
+        <div class="upload-card" id="drop-zone">
+            <h2>건설안전 사고 데이터 분석기</h2>
+            <p>이곳에 CSV 파일(국토안전관리원 데이터)을 끌어다 놓거나<br>아래 버튼을 눌러 파일을 선택해주세요.<br><span style="color:var(--danger-red); font-weight:bold; margin-top:10px; display:inline-block;">* 한글(CP949/EUC-KR) 인코딩 자동 호환 지원</span></p>
+            <label class="file-label" for="csvFileInput">파일 선택하기</label>
+            <input type="file" id="csvFileInput" accept=".csv" />
+            <div id="loading-msg" style="display:none; color: var(--primary-light); font-weight: bold; margin-top: 1.5rem; font-size:1.1rem;">
+                데이터를 분석 중입니다. 잠시만 기다려주세요...
+            </div>
+            <div id="error-msg" style="display:none; color: var(--danger-red); margin-top: 1rem; font-weight: bold;"></div>
+        </div>
+    </div>
+
+    <!-- Main Dashboard -->
+    <header id="main-header" style="display:none;">
+        <div class="header-titles">
+            <h1>건설안전 사고 데이터 인사이트</h1>
+            <p>국토안전관리원 건설안전사고사례 | 기준일: 2025-06-30</p>
+        </div>
+        <div class="header-controls">
+            <button onclick="location.reload()">처음으로 / 새 파일</button>
+            <button onclick="exportCSV()">현재 결과 CSV 다운로드</button>
+        </div>
+    </header>
+
+    <div class="container" id="main-container">
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-item">총 데이터: <span id="total-rows">0</span>건</div>
+            <div class="status-item">조회 결과: <span id="filtered-rows">0</span>건</div>
+            <div class="status-item">사고 발생 기간: <span id="date-range">-</span></div>
+            <div class="status-item" id="data-quality-btn" style="cursor:pointer; text-decoration:underline; color:var(--primary-light);" onclick="alertQuality()">데이터 집계 안내</div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filter-section">
+            <div class="filter-header">
+                <h3>다중 조건 교차 필터링</h3>
+                <button class="btn-danger" onclick="resetFilters()">필터 초기화</button>
+            </div>
+            <div class="filter-grid" id="filter-container"></div>
+            <div class="active-filters" id="active-filters"></div>
+        </div>
+
+        <!-- KPIs -->
+        <div class="kpi-grid">
+            <div class="kpi-card"><div class="kpi-title">사고 건수</div><div class="kpi-value" id="kpi-total">0</div></div>
+            <div class="kpi-card danger"><div class="kpi-title">총 사망자 수</div><div class="kpi-value" id="kpi-deaths">0</div></div>
+            <div class="kpi-card danger"><div class="kpi-title">총 부상자 수</div><div class="kpi-value" id="kpi-injuries">0</div></div>
+            <div class="kpi-card"><div class="kpi-title">사망 발생 사고</div><div class="kpi-value" id="kpi-acc-death">0</div></div>
+            <div class="kpi-card"><div class="kpi-title">부상 발생 사고</div><div class="kpi-value" id="kpi-acc-injury">0</div></div>
+            <div class="kpi-card"><div class="kpi-title">인명피해(사망/부상) 사고</div><div class="kpi-value" id="kpi-acc-both">0</div></div>
+        </div>
+
+        <!-- Charts Section -->
+        <div class="chart-grid">
+            <div class="chart-card"><h3>연도별 사고 및 인명피해 추이</h3><div id="chart-yearly" class="chart-container"></div></div>
+            <div class="chart-card"><h3>월별 사고 발생 추이</h3><div id="chart-monthly" class="chart-container"></div></div>
+            <div class="chart-card"><h3>공종(대분류)별 사고 현황 (Top 10)</h3><div id="chart-worktype" class="chart-container"></div></div>
+            <div class="chart-card"><h3>사고유형별 치명사고(사망) 비중</h3><div id="chart-accident-type" class="chart-container"></div></div>
+        </div>
+        <div class="chart-grid full">
+            <div class="chart-card"><h3>사고객체 및 인적사고유형 교차 분석 (Heatmap)</h3><div id="chart-heatmap" class="chart-container"></div></div>
+        </div>
+        <div class="chart-grid">
+            <div class="chart-card"><h3>사고위치 장소 분석</h3><div id="chart-location" class="chart-container"></div></div>
+            <div class="chart-card"><h3>안전방호 및 개인보호조치 여부</h3><div id="chart-safety" class="chart-container"></div></div>
+        </div>
+
+        <!-- Data Table -->
+        <div class="table-section">
+            <div class="table-header">
+                <h3>사고 사례 탐색</h3>
+                <input type="text" id="table-search" class="search-box" placeholder="사고명, 원인, 장소 등 검색..." onkeyup="handleSearch(event)">
+            </div>
+            <div class="table-wrapper">
+                <table id="data-table">
+                    <thead>
+                        <tr>
+                            <th>사고일시</th>
+                            <th>사고명</th>
+                            <th>공사종류</th>
+                            <th>공종(대분류)</th>
+                            <th>인적사고종류</th>
+                            <th>사망자</th>
+                            <th>부상자</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body"></tbody>
+                </table>
+            </div>
+            <div class="pagination">
+                <button onclick="changePage(-1)">이전</button>
+                <span id="page-info" style="margin: 0 1rem; font-weight: bold;">1 / 1</span>
+                <button onclick="changePage(1)">다음</button>
+                <select id="rows-per-page" onchange="changeRowsPerPage()" style="margin-left: 1rem; padding: 0.25rem;">
+                    <option value="10">10개씩 보기</option>
+                    <option value="50">50개씩 보기</option>
+                    <option value="100">100개씩 보기</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div id="detail-modal" onclick="closeModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h2 id="modal-title" style="color:var(--primary-navy);">사고 상세정보</h2>
+                <button onclick="document.getElementById('detail-modal').style.display='none'">닫기</button>
+            </div>
+            <div class="modal-body" id="modal-body-content"></div>
+        </div>
+    </div>
+
+    <script>
+        const state = { rawData: [], filteredData: [], columns: [], filters: {}, searchQuery: '', currentPage: 1, rowsPerPage: 10, quality: {} };
+        const FILTER_COLS = ['공공민간구분', '시설물 대분류', '공사종류', '공종(대분류)', '인적사고종류(대분류)', '사고객체(대분류)', '사고원인-대분류', '사고위치 장소', '날씨', '안전방호조치여부'];
+
+        // --- Drag & Drop & File Input Setup ---
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('csvFileInput');
+
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault(); dropZone.classList.remove('dragover');
+            if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if(e.target.files.length) handleFile(e.target.files[0]);
+        });
+
+        // --- Core: Read File with CP949 (EUC-KR) Decoding ---
+        function handleFile(file) {
+            document.getElementById('loading-msg').style.display = 'block';
+            document.getElementById('error-msg').style.display = 'none';
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const buffer = e.target.result;
+                // 브라우저 내장 TextDecoder로 CP949(EUC-KR) 인코딩 처리
+                const decoder = new TextDecoder('euc-kr');
+                const csvText = decoder.decode(buffer);
+
+                Papa.parse(csvText, {
+                    header: true, skipEmptyLines: true,
+                    complete: function(results) {
+                        if(results.data.length === 0 || !results.meta.fields.includes('사고명')) {
+                            showError("올바른 건설안전사고사례 CSV 파일이 아닙니다. 컬럼을 인식할 수 없습니다.");
+                            return;
+                        }
+                        processData(results.data, results.meta.fields);
+                    },
+                    error: function(err) { showError("파싱 오류: " + err.message); }
+                });
+            };
+            reader.onerror = () => showError("파일을 읽는 중 오류가 발생했습니다.");
+            reader.readAsArrayBuffer(file);
+        }
+
+        function showError(msg) {
+            const errEl = document.getElementById('error-msg');
+            errEl.textContent = msg; errEl.style.display = 'block';
+            document.getElementById('loading-msg').style.display = 'none';
+        }
+
+        // --- Data Processing ---
+        function processData(data, fields) {
+            state.columns = fields;
+            let minDate = '9999-12-31', maxDate = '0000-00-00', missingCount = 0;
+
+            const processed = data.map(row => {
+                if(row['사고일시']) {
+                    const d = String(row['사고일시']).substring(0, 10).replace(/\//g, '-');
+                    if(d.length === 10) {
+                        if(d < minDate) minDate = d;
+                        if(d > maxDate) maxDate = d;
+                        row['_Year'] = d.substring(0,4);
+                        row['_Month'] = d.substring(0,7);
+                    } else { row['_Year'] = '미상'; row['_Month'] = '미상'; }
+                }
+
+                ['사망자', '부상자'].forEach(col => {
+                    row[col] = fields.includes(col) ? (parseInt(row[col]) || 0) : 0;
+                });
+
+                fields.forEach(col => {
+                    if(row[col] === null || row[col] === undefined || String(row[col]).trim() === '') {
+                        row[col] = '미입력'; missingCount++;
+                    }
+                });
+                return row;
+            });
+
+            state.rawData = processed; state.filteredData = [...processed];
+            state.quality = {
+                rows: processed.length, cols: fields.length,
+                minDate: minDate !== '9999-12-31' ? minDate : '알 수 없음',
+                maxDate: maxDate !== '0000-00-00' ? maxDate : '알 수 없음',
+                missingRate: ((missingCount / (processed.length * fields.length)) * 100).toFixed(1)
+            };
+            initDashboard();
+        }
+
+        function initDashboard() {
+            document.getElementById('upload-overlay').style.display = 'none';
+            document.getElementById('main-header').style.display = 'flex';
+            document.querySelector('.container').style.display = 'block';
+
+            document.getElementById('total-rows').textContent = state.quality.rows.toLocaleString();
+            document.getElementById('date-range').textContent = `${state.quality.minDate} ~ ${state.quality.maxDate}`;
+
+            buildFilters(); updateDashboard();
+        }
+
+        function alertQuality() {
+            alert(`[데이터 집계 안내]\n- 총 로드된 데이터: ${state.quality.rows.toLocaleString()}건\n- 결측/미입력 데이터 비율: 약 ${state.quality.missingRate}%\n\n* 주의: 통계적 상관관계를 인과관계로 해석하지 마십시오. 특정 공종의 사고 건수가 많다고 해서 반드시 가장 위험한 공종을 의미하지는 않습니다.`);
+        }
+
+        // --- Filtering ---
+        function buildFilters() {
+            const container = document.getElementById('filter-container');
+            container.innerHTML = '';
+            
+            FILTER_COLS.forEach(col => {
+                if(!state.columns.includes(col)) return;
+                const uniqueVals = [...new Set(state.rawData.map(r => r[col]))].filter(v => v !== '미입력').sort();
+                
+                const group = document.createElement('div');
+                group.className = 'filter-group';
+                group.innerHTML = `<label>${col}</label>
+                    <select id="filter-${col}" onchange="applyFilter('${col}', this.value)">
+                        <option value="">전체보기</option>
+                        <option value="미입력">미입력</option>
+                        ${uniqueVals.map(v => `<option value="${v}">${v}</option>`).join('')}
+                    </select>`;
+                container.appendChild(group);
+            });
+        }
+
+        function applyFilter(col, value) {
+            if(value === "") delete state.filters[col];
+            else state.filters[col] = value;
+            state.currentPage = 1; runFiltering();
+        }
+
+        function handleSearch(e) {
+            state.searchQuery = e.target.value.toLowerCase();
+            state.currentPage = 1; runFiltering();
+        }
+
+        function resetFilters() {
+            state.filters = {}; state.searchQuery = '';
+            document.getElementById('table-search').value = '';
+            document.querySelectorAll('.filter-group select').forEach(s => s.value = "");
+            runFiltering();
+        }
+
+        function runFiltering() {
+            state.filteredData = state.rawData.filter(row => {
+                for (let key in state.filters) {
+                    if (row[key] !== state.filters[key]) return false;
+                }
+                if (state.searchQuery) {
+                    const rowText = Object.values(row).join(' ').toLowerCase();
+                    if (!rowText.includes(state.searchQuery)) return false;
+                }
+                return true;
+            });
+
+            document.getElementById('filtered-rows').textContent = state.filteredData.length.toLocaleString();
+            
+            const chipContainer = document.getElementById('active-filters');
+            chipContainer.innerHTML = Object.entries(state.filters).map(([k, v]) => 
+                `<div class="filter-chip">${k}: ${v} <span onclick="document.getElementById('filter-${k}').value=''; applyFilter('${k}', '')">✕</span></div>`
+            ).join('');
+
+            updateDashboard();
+        }
+
+        function updateDashboard() { updateKPIs(); drawCharts(); renderTable(); }
+
+        // --- KPIs ---
+        function updateKPIs() {
+            const d = state.filteredData;
+            let deaths = 0, injuries = 0, accD = 0, accI = 0, accBoth = 0;
+
+            d.forEach(r => {
+                deaths += r['사망자']; injuries += r['부상자'];
+                if(r['사망자'] > 0) accD++;
+                if(r['부상자'] > 0) accI++;
+                if(r['사망자'] > 0 || r['부상자'] > 0) accBoth++;
+            });
+
+            document.getElementById('kpi-total').textContent = d.length.toLocaleString();
+            document.getElementById('kpi-deaths').textContent = deaths.toLocaleString();
+            document.getElementById('kpi-injuries').textContent = injuries.toLocaleString();
+            document.getElementById('kpi-acc-death').textContent = accD.toLocaleString();
+            document.getElementById('kpi-acc-injury').textContent = accI.toLocaleString();
+            document.getElementById('kpi-acc-both').textContent = accBoth.toLocaleString();
+        }
+
+        // --- Charts ---
+        function aggregate(data, keyCol) {
+            const counts = {};
+            data.forEach(r => {
+                const k = r[keyCol] && r[keyCol] !== '미입력' ? r[keyCol] : '기타/미상';
+                counts[k] = (counts[k] || 0) + 1;
+            });
+            return counts;
+        }
+
+        function drawCharts() {
+            const d = state.filteredData;
+            if(d.length === 0) return;
+            const layoutBase = { margin: { t: 20, r: 20, b: 60, l: 60 }, font: { family: 'Pretendard' }, paper_bgcolor: 'transparent', plot_bgcolor: 'transparent' };
+
+            // 1. 연도별
+            const yearly = aggregate(d, '_Year');
+            const years = Object.keys(yearly).filter(y=>y!=='기타/미상').sort();
+            Plotly.newPlot('chart-yearly', [{ x: years, y: years.map(y => yearly[y]), type: 'bar', marker: {color: '#1E3A8A'} }], layoutBase, {displayModeBar: false});
+
+            // 2. 월별 (최근 24개월)
+            const monthly = aggregate(d, '_Month');
+            const months = Object.keys(monthly).filter(m=>m!=='기타/미상').sort().slice(-24);
+            Plotly.newPlot('chart-monthly', [{ x: months, y: months.map(m => monthly[m]), type: 'scatter', mode: 'lines+markers', line: {color: '#3B82F6', width: 3} }], layoutBase, {displayModeBar: false});
+
+            // 3. 공종별
+            if(state.columns.includes('공종(대분류)')) {
+                const wt = aggregate(d, '공종(대분류)');
+                const sortedWT = Object.entries(wt).sort((a,b)=> b[1] - a[1]).slice(0,10);
+                Plotly.newPlot('chart-worktype', [{ y: sortedWT.map(x=>x[0]).reverse(), x: sortedWT.map(x=>x[1]).reverse(), type: 'bar', orientation: 'h', marker: {color: '#60A5FA'} }], { ...layoutBase, margin: {l: 100, t:20, b:40, r:20} }, {displayModeBar: false});
+            }
+
+            // 4. 인적사고종류 치명상 비중
+            if(state.columns.includes('인적사고종류(대분류)')) {
+                const at = {};
+                d.forEach(r => {
+                    const k = r['인적사고종류(대분류)'] || '미상';
+                    if(!at[k]) at[k] = { total: 0, fatal: 0 };
+                    at[k].total++; if(r['사망자'] > 0) at[k].fatal++;
+                });
+                const sortedAT = Object.entries(at).sort((a,b)=> b[1].total - a[1].total).slice(0, 8);
+                Plotly.newPlot('chart-accident-type', [
+                    { x: sortedAT.map(x=>x[0]), y: sortedAT.map(x=>x[1].total - x[1].fatal), name: '일반/부상', type: 'bar', marker: {color: '#9CA3AF'} },
+                    { x: sortedAT.map(x=>x[0]), y: sortedAT.map(x=>x[1].fatal), name: '사망발생', type: 'bar', marker: {color: '#DC2626'} }
+                ], { ...layoutBase, barmode: 'stack' }, {displayModeBar: false});
+            }
+
+            // 5. Heatmap
+            if(state.columns.includes('사고객체(대분류)') && state.columns.includes('인적사고종류(대분류)')) {
+                const objs = [...new Set(d.map(r=>r['사고객체(대분류)']))].filter(x=>x!=='미입력').slice(0, 10);
+                const types = [...new Set(d.map(r=>r['인적사고종류(대분류)']))].filter(x=>x!=='미입력').slice(0, 10);
+                const zData = types.map(t => objs.map(o => d.filter(r => r['인적사고종류(대분류)'] === t && r['사고객체(대분류)'] === o).length));
+                Plotly.newPlot('chart-heatmap', [{ z: zData, x: objs, y: types, type: 'heatmap', colorscale: 'Blues' }], { ...layoutBase, margin: {l: 120, b: 80, t: 20, r: 20} }, {displayModeBar: false});
+            }
+
+            // 6. 사고위치
+            if(state.columns.includes('사고위치 장소')) {
+                const loc = aggregate(d, '사고위치 장소');
+                const sortedLoc = Object.entries(loc).sort((a,b)=> b[1] - a[1]).slice(0, 5);
+                Plotly.newPlot('chart-location', [{ labels: sortedLoc.map(x=>x[0]), values: sortedLoc.map(x=>x[1]), type: 'pie', hole: 0.4 }], layoutBase, {displayModeBar: false});
+            }
+
+            // 7. 안전방호
+            if(state.columns.includes('안전방호조치여부')) {
+                const sf = aggregate(d, '안전방호조치여부');
+                Plotly.newPlot('chart-safety', [{ x: Object.keys(sf), y: Object.values(sf), type: 'bar', marker: {color: '#10B981'} }], layoutBase, {displayModeBar: false});
+            }
+        }
+
+        // --- Table ---
+        function changeRowsPerPage() { state.rowsPerPage = parseInt(document.getElementById('rows-per-page').value); state.currentPage = 1; renderTable(); }
+        function changePage(delta) {
+            const maxPage = Math.ceil(state.filteredData.length / state.rowsPerPage) || 1;
+            state.currentPage += delta;
+            if(state.currentPage < 1) state.currentPage = 1;
+            if(state.currentPage > maxPage) state.currentPage = maxPage;
+            renderTable();
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('table-body');
+            tbody.innerHTML = '';
+            const start = (state.currentPage - 1) * state.rowsPerPage;
+            const pageData = state.filteredData.slice(start, start + state.rowsPerPage);
+
+            pageData.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.onclick = () => openDetailModal(row);
+                tr.innerHTML = `
+                    <td>${row['사고일시'] || '-'}</td>
+                    <td style="max-width:250px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${row['사고명']}">${row['사고명'] || '-'}</td>
+                    <td>${row['공사종류'] || '-'}</td>
+                    <td>${row['공종(대분류)'] || '-'}</td>
+                    <td>${row['인적사고종류'] || row['인적사고종류(대분류)'] || '-'}</td>
+                    <td style="color:${row['사망자'] > 0 ? 'red' : 'inherit'}; font-weight:bold;">${row['사망자']}</td>
+                    <td>${row['부상자']}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            const maxPage = Math.ceil(state.filteredData.length / state.rowsPerPage) || 1;
+            document.getElementById('page-info').textContent = `${state.currentPage} / ${maxPage}`;
+        }
+
+        // --- Modal ---
+        function openDetailModal(row) {
+            document.getElementById('modal-title').textContent = row['사고명'] || '사고 상세정보';
+            const content = document.getElementById('modal-body-content');
+            content.innerHTML = '';
+
+            const groups = {
+                "사고 기본정보": ['사고일시', '공공민간구분', '날씨', '온도'],
+                "시설 및 공사정보": ['시설물 대분류', '공사종류', '공종(대분류)', '공정율'],
+                "사고 유형 및 객체": ['인적사고종류(대분류)', '물적사고종류', '사고객체(대분류)', '작업프로세스'],
+                "사고 원인 및 위치": ['사고위치 장소', '사고위치 부위(직접입력)', '사고원인-대분류', '구체적사고원인'],
+                "피해 규모": ['사망자', '부상자', '피해금액'],
+                "사고 경위 및 대책": ['사고경위', '사고발생후 조치사항', '재발방지대책']
+            };
+
+            for(const [gName, cols] of Object.entries(groups)) {
+                const validCols = cols.filter(c => state.columns.includes(c));
+                if(validCols.length === 0) continue;
+                const isFull = gName === "사고 경위 및 대책";
+                
+                let html = `<div class="detail-group ${isFull ? 'full-width' : ''}"><h4>${gName}</h4>`;
+                validCols.forEach(col => {
+                    html += `<div class="detail-row"><div class="label">${col}</div><div class="value">${row[col]}</div></div>`;
+                });
+                html += `</div>`;
+                content.innerHTML += html;
+            }
+            document.getElementById('detail-modal').style.display = 'flex';
+        }
+
+        function closeModal(e) { if(e.target.id === 'detail-modal') document.getElementById('detail-modal').style.display = 'none'; }
+
+        // --- Export ---
+        function exportCSV() {
+            if(state.filteredData.length === 0) return alert("다운로드할 데이터가 없습니다.");
+            const csv = Papa.unparse(state.filteredData);
+            const blob = new Blob(["\uFEFF"+csv], { type: 'text/csv;charset=utf-8;' }); // 엑셀 호환 BOM 추가
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = `건설안전사고_필터결과_${new Date().getTime()}.csv`;
+            link.click();
+        }
+    </script>
+</body>
+</html>
